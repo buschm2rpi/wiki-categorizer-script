@@ -2,7 +2,7 @@
 
 # Make sure the build environment is set up, and local variables are defined
 . ./setup-env.sh
-
+# exit
 # Define the work directory for this script
 export WORK_DIR=${ROOT_DIR}/output
 
@@ -10,7 +10,7 @@ export WORK_DIR=${ROOT_DIR}/output
 ########################################################################
 # Start from scratch. Delete the output directory if it exists.
 ########################################################################
-
+#<<comment_reset_output_dir
 # force the removal of the output directory, and re-create it
 rm -rf $WORK_DIR
 mkdir $WORK_DIR
@@ -34,53 +34,57 @@ ${MAHOUT_HOME}/mahout lucene.vector \
 	--weight tfidf \
 	--max 500
 
-touch ${WORK_DIR}/wiki-lucene-vec/tfidf-vectors/_SUCCESS
+echo "getting word vectors from solr"
+${MAHOUT_HOME}/mahout lucene2seq \
+	-i ${INDEX_DIR} \
+	-id id \
+	-f title \
+	-o ${WORK_DIR}/lucene2seq_out \
+	-xm sequential
+
+# trim the useless header text from the file
+${MAHOUT_HOME}/mahout seqdumper -i ${WORK_DIR}/lucene2seq_out/index | tail -n +5 | head -n -1 > ${DDR_DIR}/id2article.txt
 #exit
 #commented
 
-#<<commented1
-#########################################################################
-# Pull the categories off of the solr db
-# Note: Delete "-n 500 \" to pull all of the available data from solr
-#########################################################################
-
-export MAHOUT_INTEGRATION=${MAHOUT_WIKI_REPO}/integration
-${MAVEN_HOME}/mvn -f ${MAHOUT_INTEGRATION}/pom.xml package -DskipTests
-mv ${MAHOUT_INTEGRATION}/target/*.jar ${WORK_DIR}
-
-echo "generating categories file"
-#java -jar lucene2cats.jar \
-java -cp ${WORK_DIR}/mahout-integration-0.9.jar org.apache.mahout.text.SequenceFilesFromLuceneStorageDriver \
--i ${INDEX_DIR} \
--o ${WORK_DIR}/wiki-cats-seq \
--id id \
--f categories \
--n 500 \
--xm sequential
-
+# convert article names to database document ids
+mkdir ${WORK_DIR}/ddr_seq
+cd ${WIKICATEGORIES_REPO}/source_files &&
+make -f makefile &&
+./article2id > ${DDR_DIR}/idSuperCats.txt &&
+cd ${ROOT_DIR}
 #exit
-#commented1
 
-#<<commented2
-#########################################################################
-# Assign categories to the word vectors, based on their common id
-#########################################################################
-
-echo "compiling lucene_cats_combine"
+# compile WikiTweet specific functions
+echo "compiling wikitweet"
 ${MAVEN_HOME}/mvn -f ${WIKITWEET_REPO}/pom.xml package -DskipTests
 mv ${WIKITWEET_REPO}/target/*.jar ${WORK_DIR}
 
-echo "combining catagory and term vector sequence files"
-#java -jar lucene_cats_combine.jar \
-java -cp ${WORK_DIR}/lucene_cats_combine-0.1.jar com.wikitweet.tools.lucene_cats_combine \
-${WORK_DIR}/wiki-lucene-vec/tfidf-vectors/part-r-00000 \
-${WORK_DIR}/wiki-cats-seq/index \
-${WORK_DIR}/combined_out
+# convert idSuperCats.txt to sequence file format
+java -cp ${WORK_DIR}/wikitweet-0.1.jar com.wikitweet.tools.TextFile2SeqDriver \
+	${DDR_DIR}/idSuperCats.txt \
+	${WORK_DIR}/ddr_seq/idcats
 
-#exit
-#commented2
+# convert supercategories to vectors
+java -cp ${WORK_DIR}/wikitweet-0.1.jar com.wikitweet.tools.Cat2SeqDriver \
+	${WORK_DIR}/ddr_seq/idcats \
+	${WORK_DIR}/ddr_seq/idcatsvectors
+commout
 
-#<<commented3
+# generate the key-value pairs in the format needed for mahout's naive Bayes
+java -cp ${WORK_DIR}/wikitweet-0.1.jar com.wikitweet.tools.lucene_cats_combine \
+	${WORK_DIR}/wiki-lucene-vec/tfidf-vectors/part-r-00000 \
+	${WORK_DIR}/ddr_seq/idcatsvectors/part-m-00000 \
+	${WORK_DIR}/ddr_seq/nb_input
+exit
+
+################################################################
+# TODO: (1) Split the data right after pulling from solr
+#       (2) Use output confusion matrix to observe Super Category distributions 
+################################################################
+
+
+<<commented3
 #######################################################################
 # Split the data for cross-validation
 #######################################################################
@@ -93,7 +97,7 @@ ${MAHOUT_HOME}/mahout split \
     --randomSelectionPct 20 --overwrite --sequenceFiles -xm sequential
 
 exit
-#commented3
+commented3
 
 <<commented4
 #######################################################################
